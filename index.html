@@ -1326,9 +1326,15 @@ src="https://www.facebook.com/tr?id=1483607693564744&ev=PageView&noscript=1"
     submitting = true;
     backBtn.hidden = true;
     progressFill.style.width = '100%';
-    await transition(1, function(){
-      container.innerHTML = '<div class="lm-eyebrow">Quase lá</div><h1 class="lm-headline">Enviando suas respostas...</h1>';
-    });
+    // A troca de tela usa requestAnimationFrame, que pode nunca disparar se a aba
+    // estiver em segundo plano (ex: pessoa trocou de app no celular nesse instante).
+    // Por isso essa espera tem um limite curto — nunca deve travar o envio de verdade.
+    await Promise.race([
+      transition(1, function(){
+        container.innerHTML = '<div class="lm-eyebrow">Quase lá</div><h1 class="lm-headline">Enviando suas respostas...</h1>';
+      }),
+      new Promise(function(resolve){ setTimeout(resolve, 500); })
+    ]);
     try {
       var write = addDoc(collection(db, 'leads'), {
         name: answers.name,
@@ -1345,12 +1351,32 @@ src="https://www.facebook.com/tr?id=1483607693564744&ev=PageView&noscript=1"
       });
       var timeout = new Promise(function(_, reject){ setTimeout(function(){ reject(new Error('timeout')); }, 10000); });
       await Promise.race([write, timeout]);
+      notifyPhone();
       if (typeof fbq === 'function') { fbq('track', 'Lead'); }
       showDone();
     } catch (e) {
       container.innerHTML = '<div class="lm-eyebrow">Ops</div><h1 class="lm-headline">Não deu pra enviar agora</h1><p class="lm-hint error">Tenta de novo em alguns segundos.</p><div class="lm-actions"><button class="lm-btn-continue" id="lmRetryBtn">Tentar novamente</button></div>';
       document.getElementById('lmRetryBtn').addEventListener('click', function(){ submitting = false; submitLead(); });
     }
+  }
+
+  var NTFY_TOPIC = 'heryn-leads-d8110e2b08';
+
+  function notifyPhone(){
+    // Nome/empresa vão no corpo (texto livre em UTF-8), não no cabeçalho —
+    // cabeçalhos HTTP não aceitam com segurança certos acentos/caracteres.
+    var body = [
+      'Nome: ' + (answers.name || '-'),
+      'Empresa: ' + (answers.company || '-'),
+      'WhatsApp: ' + (answers.whatsapp || '-'),
+      'Ramo: ' + (answers.segment || '-'),
+      'Faturamento: ' + (answers.revenueRange || '-')
+    ].join('\n');
+    fetch('https://ntfy.sh/' + NTFY_TOPIC, {
+      method: 'POST',
+      body: body,
+      headers: { 'Title': 'Novo lead recebido', 'Tags': 'moneybag', 'Priority': 'high' }
+    }).catch(function(){ /* aviso é best-effort — nunca deve travar o envio do lead */ });
   }
 
   function showDone(){
